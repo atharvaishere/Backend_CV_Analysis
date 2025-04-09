@@ -1,21 +1,28 @@
 FROM python:3.12-slim
 
-# Install system dependencies (FFmpeg + OpenGL)
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y \
     ffmpeg \
-    libgl1 \
+    libgl1-mesa-glx \
+    libgl1\
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    ffmpeg\
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first for caching
+# Install Python dependencies first for caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest
+# Copy application code
 COPY . .
 
-# Run the app
+# Set environment variable
+ENV PORT=8000
+
+# Run the application
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}"]
