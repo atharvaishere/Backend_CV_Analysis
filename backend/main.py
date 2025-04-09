@@ -23,7 +23,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Your Vite frontend
+    allow_origins=["https://crownalysis.up.railway.app/"],  # Your Vite frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
