@@ -239,4 +239,5 @@ def register_cleanup(files_to_clean: list):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))  # Default to 8000 if not set
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port)
