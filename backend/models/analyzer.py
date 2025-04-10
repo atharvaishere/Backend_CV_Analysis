@@ -14,15 +14,16 @@ class TrackAnalyzer:
         self.frame_height = frame_height
         self.interaction_queue = []
         self.handshake_params = {
-            'max_distance': 0.10 * frame_width,
-            'min_duration': 5,
-            'max_velocity': 2.0,
+            'max_distance': 0.15 * frame_width,
+            'min_duration': 3,
+            'max_velocity': 3.0,
             'min_overlap': 0.15,
-            'aspect_stability': 0.1
+            'edge_distance_threshold': 0.05 * frame_width,
+            'aspect_stability': 0.2
         }
 
         self.min_interaction_frames = 5
-        self.handshake_max_dist = 0.10 * frame_width
+       # self.handshake_max_dist = 0.10 * frame_width
         self.push_vel_threshold = 5.0
         self.wrestle_min_frames = 5
         self.wrestle_overlap_threshold = 0.3
@@ -69,6 +70,7 @@ class TrackAnalyzer:
                     'id2': id2,
                     'time': frame_time,
                     'distance': distance.euclidean(self._box_center(box1), self._box_center(box2)),
+                    'edge_distance': self._bbox_edge_distance(box1, box2),
                     'overlap': self._bbox_overlap(box1, box2),
                     'rel_velocity': self._relative_velocity(id1, id2),
                     'duration': len(self.track_history[id1]['interaction_partners'][id2]) + 1
@@ -82,20 +84,30 @@ class TrackAnalyzer:
 
     def _classify_interaction(self, interaction):
         """Classify the type of interaction"""
-        if (interaction['duration'] >= self.wrestle_min_frames and
-                interaction['overlap'] > self.wrestle_overlap_threshold and
-                any(v > self.velocity_spike_threshold for v in interaction['velocity_spikes'])):
-            return "Wrestling", 0.9
         if (interaction['duration'] >= self.handshake_params['min_duration'] and
-                interaction['distance'] < self.handshake_params['max_distance'] and
-                interaction['overlap'] > self.handshake_params['min_overlap'] and
+                interaction['edge_distance'] < self.handshake_params['edge_distance_threshold'] and
                 interaction['rel_velocity'] < self.handshake_params['max_velocity'] and
                 self._check_aspect_stability(interaction)):
-            return "Handshake", min(0.9, (1 - interaction['distance'] / self.handshake_params['max_distance']))
+            return "Handshake", min(0.9, (1 - interaction['edge_distance'] / self.handshake_params['edge_distance_threshold']))
+        
+        # Then check Wrestling
+        if (interaction['duration'] >= self.wrestle_min_frames and
+                self._bbox_overlap(interaction['id1'], interaction['id2']) > self.wrestle_overlap_threshold and
+                any(v > self.velocity_spike_threshold for v in interaction['velocity_spikes'])):
+            return "Wrestling", 0.9
+        
         if interaction['rel_velocity'] > self.push_vel_threshold:
             return "Pushing", min(0.9, interaction['rel_velocity'] / 15)
         return "Interaction", 0.6
 
+    def _bbox_edge_distance(self, box1, box2):
+        """Calculate the closest distance between the edges of two boxes"""
+        if not all(isinstance(coord, (int, float)) for coord in box1 + box2):
+            return float('inf')  # Invalid boxes are considered far apart
+        dx = max(0, max(box1[0] - box2[2], box2[0] - box1[2]))
+        dy = max(0, max(box1[1] - box2[3], box2[1] - box1[3]))
+        return np.sqrt(dx**2 + dy**2)
+    
     def _check_aspect_stability(self, interaction):
         """Check if aspect ratios are stable during interaction"""
         track1_aspects = self.track_history[interaction['id1']]['aspect_ratio'][-5:]
@@ -116,29 +128,32 @@ class TrackAnalyzer:
         return spikes
 
     def _bbox_overlap(self, box1, box2):
-        """Calculate overlap between two bounding boxes"""
-        x_left = max(box1[0], box2[0])
-        y_top = max(box1[1], box2[1])
-        x_right = min(box1[2], box2[2])
-        y_bottom = min(box1[3], box2[3])
-        if x_right < x_left or y_bottom < y_top:
-            return 0.0
-        intersection = (x_right - x_left) * (y_bottom - y_top)
-        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-        return intersection / (area1 + area2 - intersection)
+     
+     """Calculate IoU between two boxes"""
+     if not all(isinstance(coord, (int, float)) for coord in box1 + box2):
+        return 0.0  # Invalid boxes have no overlap
+     x_left = max(box1[0], box2[0])
+     y_top = max(box1[1], box2[1])
+     x_right = min(box1[2], box2[2])
+     y_bottom = min(box1[3], box2[3])
+     if x_right < x_left or y_bottom < y_top:
+      return 0.0
+     intersection = (x_right - x_left) * (y_bottom - y_top)
+     area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+     area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+     return intersection / (area1 + area2 - intersection + 1e-6)
 
     def _box_center(self, box):
         """Calculate center coordinates of a bounding box"""
         return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
 
     def _relative_velocity(self, id1, id2):
-        """Calculate relative velocity between two tracks"""
-        v1 = np.array(self.track_history[id1]['velocity']) if self.track_history[id1]['velocity'] else np.zeros(2)
-        v2 = np.array(self.track_history[id2]['velocity']) if self.track_history[id2]['velocity'] else np.zeros(2)
+        """Calculate relative velocity using recent frames"""
+        v1 = np.array(self.track_history[id1]['velocity'][-5:]) if self.track_history[id1]['velocity'] else np.zeros((1, 2))
+        v2 = np.array(self.track_history[id2]['velocity'][-5:]) if self.track_history[id2]['velocity'] else np.zeros((1, 2))
         mean_v1 = np.mean(v1, axis=0) if len(v1) > 0 else np.zeros(2)
         mean_v2 = np.mean(v2, axis=0) if len(v2) > 0 else np.zeros(2)
-        return np.linalg.norm(mean_v1 - mean_v2)
+        return float(np.linalg.norm(mean_v1 - mean_v2))
 
     def get_interactions(self):
         """Return and clear the current interaction queue"""

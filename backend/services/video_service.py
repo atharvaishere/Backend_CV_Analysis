@@ -9,10 +9,11 @@ from collections import defaultdict
 from scipy.spatial import distance
 import matplotlib.pyplot as plt
 import json
+import random
 import os
 import base64
-
 from backend.models.analyzer import TrackAnalyzer
+from typing import Dict, Tuple, List
 
 class VideoProcessor:
     def __init__(self):
@@ -44,7 +45,135 @@ class VideoProcessor:
         with open(video_path, "rb") as video_file:
             encoded_string = base64.b64encode(video_file.read()).decode('utf-8')
         return encoded_string
+    def _draw_curved_line(self, frame, pt1, pt2, color, thickness=2):
+        """Draw a curved connection line between two points"""
+    # Calculate control point for the curve
+        offset = 30  # Curve amplitude
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        angle = np.arctan2(dy, dx)
     
+    # Calculate perpendicular offset direction
+        ctrl_pt = (
+        (pt1[0] + pt2[0]) // 2 + int(offset * np.cos(angle + np.pi/2)),
+        (pt1[1] + pt2[1]) // 2 + int(offset * np.sin(angle + np.pi/2))
+        )
+    
+    # Draw Bezier curve
+        pts = np.array([pt1, ctrl_pt, pt2], np.int32)
+        cv2.polylines(frame, [pts], False, color, thickness, lineType=cv2.LINE_AA)
+
+    def _draw_dashed_line(self, frame, pt1, pt2, color, thickness=2, dash_length=10):
+        """Draw dashed line between two points"""
+        dist = ((pt1[0]-pt2[0])**2 + (pt1[1]-pt2[1])**2)**0.5
+        dashes = int(dist / dash_length)
+        for i in range(dashes):
+            start = (int(pt1[0] + (pt2[0]-pt1[0])*i/dashes),
+                    int(pt1[1] + (pt2[1]-pt1[1])*i/dashes))
+            end = (int(pt1[0] + (pt2[0]-pt1[0])*(i+0.5)/dashes),
+                    int(pt1[1] + (pt2[1]-pt1[1])*(i+0.5)/dashes))
+            cv2.line(frame, start, end, color, thickness, lineType=cv2.LINE_AA) 
+
+    def _draw_interaction_label(self, frame, text, position, angle, color):
+        """Draw rotated text label"""
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
+        text_img = np.zeros_like(frame)
+        # Get text size and create rotation matrix
+        text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+        M = cv2.getRotationMatrix2D(position, angle, 1)
+    
+        # Create background rectangle
+        rect_w = text_size[0] + 10
+        rect_h = text_size[1] + 10
+        rect_pts = np.array([
+            [-rect_w//2, -rect_h//2],
+            [rect_w//2, -rect_h//2],
+            [rect_w//2, rect_h//2],
+            [-rect_w//2, rect_h//2]
+        ])
+        rect_pts = (rect_pts @ M[:2,:2].T + position).astype(int)
+        cv2.fillPoly(frame, [rect_pts], (40, 40, 40))
+    
+        text_origin = np.array([position[0] - text_size[0]//2, position[1] + text_size[1]//2])
+        cv2.putText(
+        text_img, text, 
+        tuple(text_origin.astype(int)),
+        font, font_scale, color, thickness, lineType=cv2.LINE_AA
+        )
+
+        rotated = cv2.warpAffine(text_img, M, (frame.shape[1], frame.shape[0]))
+        frame[:] = cv2.addWeighted(frame, 1.0, rotated, 1.0, 0)
+    
+    def _draw_style_line(self, frame: np.ndarray, pt1: Tuple[int, int], pt2: Tuple[int, int], 
+                    color: Tuple[int, int, int], interaction_type: str, confidence: float) -> None:
+        """Draw stylish connection line with appropriate style for each interaction type"""
+        line_thickness = max(1, min(4, int(4 * confidence)))
+        
+        if interaction_type == "Handshake":
+            # Elegant curved double line with gradient
+            for offset in [-2, 2]:
+                pts = np.array([
+                    pt1,
+                    (pt1[0] + (pt2[0]-pt1[0])//3, pt1[1] + (pt2[1]-pt1[1])//3 + offset*3),
+                    (pt1[0] + 2*(pt2[0]-pt1[0])//3, pt1[1] + 2*(pt2[1]-pt1[1])//3 - offset*3),
+                    pt2
+                ], np.int32)
+                cv2.polylines(frame, [pts], False, color, line_thickness, lineType=cv2.LINE_AA)
+                
+        elif interaction_type == "Pushing":
+            # Angled arrow-like dashed line
+            arrow_length = min(15, int(np.hypot(pt2[0]-pt1[0], pt2[1]-pt1[1])/3))
+            cv2.arrowedLine(frame, pt1, pt2, color, line_thickness, 
+                          line_type=cv2.LINE_AA, tipLength=0.2)
+            
+        else:
+            # Smooth bezier curve for other interactions
+            control_pt = (
+                (pt1[0] + pt2[0]) // 2 + random.randint(-20, 20),
+                (pt1[1] + pt2[1]) // 2 + random.randint(-20, 20))
+            pts = np.array([pt1, control_pt, pt2], np.int32)
+            cv2.polylines(frame, [pts], False, color, line_thickness, lineType=cv2.LINE_AA)
+
+
+    def _draw_elegant_label(self, frame: np.ndarray, text: str, position: Tuple[int, int], 
+                          color: Tuple[int, int, int]) -> None:
+        """Draw professional-looking label with rounded background"""
+        font = cv2.FONT_HERSHEY_DUPLEX
+        font_scale = 0.6
+        thickness = 1
+        padding = 7
+        radius = 10
+        
+        # Get text size
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        # Create rounded rectangle background
+        pt1 = (position[0] - padding, position[1] - text_height - padding)
+        pt2 = (position[0] + text_width + padding, position[1] + padding)
+        
+        # Draw rounded rectangle
+        cv2.rectangle(frame, 
+                     (pt1[0], pt1[1] + radius),
+                     (pt2[0], pt2[1] - radius), 
+                     (40, 40, 40), -1)
+        cv2.rectangle(frame, 
+                     (pt1[0] + radius, pt1[1]),
+                     (pt2[0] - radius, pt2[1]), 
+                     (40, 40, 40), -1)
+        cv2.circle(frame, (pt1[0] + radius, pt1[1] + radius), radius, (40, 40, 40), -1)
+        cv2.circle(frame, (pt2[0] - radius, pt1[1] + radius), radius, (40, 40, 40), -1)
+        cv2.circle(frame, (pt1[0] + radius, pt2[1] - radius), radius, (40, 40, 40), -1)
+        cv2.circle(frame, (pt2[0] - radius, pt2[1] - radius), radius, (40, 40, 40), -1)
+        
+        # Draw text with subtle shadow
+        cv2.putText(frame, text, 
+                   (position[0] + 1, position[1] + 1), 
+                   font, font_scale, (0, 0, 0), thickness, lineType=cv2.LINE_AA)
+        cv2.putText(frame, text, 
+                   position, 
+                   font, font_scale, color, thickness, lineType=cv2.LINE_AA)
     def process_video(self, video_path: str, output_folder: str, 
                      desired_fps: int = 10, confidence_threshold: float = 0.3, 
                      iou_threshold: float = 0.4):
@@ -99,11 +228,10 @@ class VideoProcessor:
 
             # Process frame
             frame = cv2.resize(frame, (512, 384))
-
             # Person detection
             results = self.yolo_model(frame, classes=[0], 
                                     conf=confidence_threshold, 
-                                    iou=iou_threshold)
+                                   iou=iou_threshold)
             detections = []
             for result in results:
                 for box in result.boxes:
@@ -131,16 +259,40 @@ class VideoProcessor:
                 cv2.putText(frame, info_text, (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-            # Draw interaction lines
-            for id1, id2, interaction_type, confidence in analyzer.get_interactions():
-                center1 = analyzer._box_center(analyzer.track_history[id1]['boxes'][-1])
-                center2 = analyzer._box_center(analyzer.track_history[id2]['boxes'][-1])
+            
+            interactions = analyzer.get_interactions()
+            drawn_pairs = set()
 
-                color = interaction_colors.get(interaction_type, (255, 255, 255))
-                cv2.line(frame, center1, center2, color, 2)
-                mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
-                cv2.putText(frame, f"{interaction_type} {confidence * 100:.0f}%", mid_point,
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            for interaction in interactions:
+                id1, id2, interaction_type, confidence = interaction
+                if (id1, id2) in drawn_pairs or (id2, id1) in drawn_pairs:
+                    continue
+        
+                # Get current positions
+                try:
+                    box1 = analyzer.track_history[id1]['boxes'][-1]
+                    box2 = analyzer.track_history[id2]['boxes'][-1]
+                    center1 = analyzer._box_center(box1)
+                    center2 = analyzer._box_center(box2)
+                    color = interaction_colors.get(interaction_type, (255, 255, 255))
+
+                    self._draw_style_line(frame, center1, center2, color, interaction_type, confidence)
+                    label_pos = (
+                        int(center1[0] + (center2[0]-center1[0])*0.4 + random.randint(-15, 15)),
+                        int(center1[1] + (center2[1]-center1[1])*0.4 + random.randint(-15, 15))
+                    )
+                    self._draw_elegant_label(
+                        frame, 
+                        f"{interaction_type.upper()} {confidence*100:.0f}%",
+                        label_pos,
+                        color
+                    )
+                    drawn_pairs.add((id1, id2))
+                except (IndexError, KeyError):
+                    continue
+        
+                
+    
 
             out.write(frame)
             processed_frames += 1

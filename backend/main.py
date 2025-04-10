@@ -23,11 +23,11 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","https://crownalysis.up.railway.app/"],  # Your Vite frontend
+    allow_origins=["https://crownalysis-75d5xojhh-atharvaisheres-projects.vercel.app/"],  # Your Vite frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Length"]
+    expose_headers=["Content-Length", "Content-Disposition"]
 )
 
 # Initialize services
@@ -202,8 +202,10 @@ async def analyze_and_return_video(
             headers={
                 "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
-                "Content-Disposition": "inline",
-                "Access-Control-Expose-Headers": "Content-Length"
+                "Access-Control-Allow-Origin": "https://crownalysis-75d5xojhh-atharvaisheres-projects.vercel.app",
+                "Access-Control-Allow-Origin":"https://crownalysis.vercel.app",
+                "Content-Disposition": "inline; filename=analyzed_video.mp4",
+                "Access-Control-Expose-Headers": "Content-Length, Content-Disposition"
             }
         )
         
@@ -240,4 +242,4 @@ def register_cleanup(files_to_clean: list):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))  # Default to 8000 if not set
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=port)
+    uvicorn.run("backend.main:app", host="172.20.10.5", port=port)
